@@ -14,6 +14,7 @@
   <ProjectSessionItem path="ble_zigbee_dynamic_light_switch_nus_pca10056_s140"/>
   <ProjectSessionItem path="ble_zigbee_dynamic_light_switch_nus_pca10056_s140;ble_zigbee_dynamic_light_switch_nus_pca10056_s140"/>
   <ProjectSessionItem path="ble_zigbee_dynamic_light_switch_nus_pca10056_s140;ble_zigbee_dynamic_light_switch_nus_pca10056_s140;Application"/>
+  <ProjectSessionItem path="ble_zigbee_dynamic_light_switch_nus_pca10056_s140;ble_zigbee_dynamic_light_switch_nus_pca10056_s140;nRF_Drivers"/>
  </Project>
  <Register1/>
  <Register2/>
@@ -38,7 +39,12 @@
   <Watches active="0" update="Never"/>
  </Watch4>
  <Files>
-  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="0" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="0" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="1" y="129" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="124" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="44" y="159" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../../external/zboss/include/zboss_api_aps.h" selected="0" top="148" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="955" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../../external/zboss/include/zboss_api_core.h" selected="0" top="877" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="26" y="140" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../../external/zboss/include/zcl/zb_zcl_common.h" selected="0" top="124" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="276" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../../modules/nrfx/drivers/src/nrfx_uart.c" selected="0" top="250" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="0" y="1513" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../../../../../external/zboss/include/zboss_api_zdo.h" selected="0" top="1500" codecName="Default"/>
  </Files>
- <ARMCrossStudioWindow activeProject="ble_zigbee_dynamic_light_switch_nus_pca10056_s140" fileDialogDefaultFilter="*.c" autoConnectTarget="J-Link" buildConfiguration="Release" debugSearchFileMap="" fileDialogInitialDirectory="" debugSearchPath="" autoConnectCapabilities="3199"/>
+ <ARMCrossStudioWindow activeProject="ble_zigbee_dynamic_light_switch_nus_pca10056_s140" fileDialogDefaultFilter="*.c" autoConnectTarget="J-Link" buildConfiguration="Release" debugSearchFileMap="" fileDialogInitialDirectory="" debugSearchPath="" autoConnectCapabilities="3711"/>
 </session>

@@ -125,13 +125,6 @@
 #error Define ZB_ED_ROLE to compile light switch (End Device) source code.
 #endif
 
-/* Variables used to remember found light bulb(s). */
-typedef struct light_switch_bulb_params_s
-{
-    zb_uint8_t  endpoint;
-    zb_uint16_t short_addr;
-} light_switch_bulb_params_t;
-
 /* Variables used to recognize the type of button press. */
 typedef struct light_switch_button_s
 {
@@ -142,7 +135,6 @@ typedef struct light_switch_button_s
 /* Main application customizable context. Stores all settings and static values. */
 typedef struct light_switch_ctx_s
 {
-    light_switch_bulb_params_t bulb_params;
     light_switch_button_t      button;
 } light_switch_ctx_t;
 
@@ -163,6 +155,8 @@ static ble_uuid_t m_adv_uuids[]          =                                      
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
 };
 
+static bool m_zb_binding = false;
+static zb_ieee_addr_t     m_ieee_addr;                                              /**< Device's extended address. */
 static light_switch_ctx_t m_device_ctx;
 static zb_uint8_t         m_attr_zcl_version   = ZB_ZCL_VERSION;
 static zb_uint8_t         m_attr_power_source  = ZB_ZCL_BASIC_POWER_SOURCE_UNKNOWN;
@@ -556,6 +550,7 @@ static zb_void_t light_switch_send_on_off(zb_uint8_t param, zb_uint16_t on_off)
 {
     zb_uint8_t           cmd_id;
     zb_buf_t           * p_buf = ZB_BUF_FROM_REF(param);
+    zb_uint16_t          addr = 0;
 
     if (on_off)
     {
@@ -569,9 +564,9 @@ static zb_void_t light_switch_send_on_off(zb_uint8_t param, zb_uint16_t on_off)
     NRF_LOG_INFO("Send ON/OFF command: %d", on_off);
 
     ZB_ZCL_ON_OFF_SEND_REQ(p_buf,
-                           m_device_ctx.bulb_params.short_addr,
-                           ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
-                           m_device_ctx.bulb_params.endpoint,
+                           addr,
+                           ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
+                           0,
                            LIGHT_SWITCH_ENDPOINT,
                            ZB_AF_HA_PROFILE_ID,
                            ZB_ZCL_DISABLE_DEFAULT_RESPONSE,
@@ -587,13 +582,14 @@ static zb_void_t light_switch_send_on_off(zb_uint8_t param, zb_uint16_t on_off)
 static zb_void_t light_switch_send_toggle(zb_uint8_t param)
 {
     zb_buf_t           * p_buf = ZB_BUF_FROM_REF(param);
+    zb_uint16_t          addr = 0;
 
     NRF_LOG_INFO("Send toggle command");
 
     ZB_ZCL_ON_OFF_SEND_REQ(p_buf,
-                           m_device_ctx.bulb_params.short_addr,
-                           ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
-                           m_device_ctx.bulb_params.endpoint,
+                           addr,
+                           ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
+                           0,
                            LIGHT_SWITCH_ENDPOINT,
                            ZB_AF_HA_PROFILE_ID,
                            ZB_ZCL_DISABLE_DEFAULT_RESPONSE,
@@ -633,6 +629,7 @@ static zb_void_t light_switch_send_step(zb_uint8_t param, zb_uint16_t is_step_up
 {
     zb_uint8_t           step_dir;
     zb_buf_t           * p_buf = ZB_BUF_FROM_REF(param);
+    zb_uint16_t          addr = 0;
 
     if (is_step_up)
     {
@@ -646,9 +643,9 @@ static zb_void_t light_switch_send_step(zb_uint8_t param, zb_uint16_t is_step_up
     NRF_LOG_INFO("Send step level command: %d", is_step_up);
 
     ZB_ZCL_LEVEL_CONTROL_SEND_STEP_REQ(p_buf,
-                                       m_device_ctx.bulb_params.short_addr,
-                                       ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
-                                       m_device_ctx.bulb_params.endpoint,
+                                       addr,
+                                       ZB_APS_ADDR_MODE_DST_ADDR_ENDP_NOT_PRESENT,
+                                       0,
                                        LIGHT_SWITCH_ENDPOINT,
                                        ZB_AF_HA_PROFILE_ID,
                                        ZB_ZCL_DISABLE_DEFAULT_RESPONSE,
@@ -728,6 +725,43 @@ static zb_void_t light_switch_leave_and_join(zb_uint8_t param)
     }
 }
 
+/**@brief Function for binding light bulb.
+ *
+ * @param[in]   param   Optional reference to ZigBee stack buffer to be reused by bind request procedure.
+ */
+zb_void_t light_control_bind_bulb(zb_uint8_t param, zb_uint16_t dst_addr, zb_uint8_t dst_endpoint)
+{
+    zb_buf_t *p_buf = ZB_BUF_FROM_REF(param);
+    zb_apsme_binding_req_t *p_req;
+    zb_ieee_addr_t dst_ieee_addr;
+
+    zb_address_ieee_by_short(dst_addr, dst_ieee_addr);
+
+    /* Bind On/Off cluster */
+    p_req = ZB_GET_BUF_PARAM(p_buf, zb_apsme_binding_req_t);
+
+    ZB_IEEE_ADDR_COPY(p_req->src_addr, &m_ieee_addr);
+    ZB_IEEE_ADDR_COPY(p_req->dst_addr.addr_long, dst_ieee_addr);
+
+    p_req->src_endpoint = LIGHT_SWITCH_ENDPOINT;
+    p_req->clusterid = ZB_ZCL_CLUSTER_ID_ON_OFF;
+    p_req->addr_mode = ZB_APS_ADDR_MODE_64_ENDP_PRESENT;
+    p_req->dst_endpoint = dst_endpoint;
+
+    zb_apsme_bind_request(param);
+    if (p_buf->u.hdr.status != RET_OK)
+    {
+        NRF_LOG_INFO("Failed to create binding for on/off cluster, status: %d ", p_buf->u.hdr.status);
+    }
+
+    /* Bind Level Control cluster */
+    p_req->clusterid = ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL;
+    zb_apsme_bind_request(param);
+    if (p_buf->u.hdr.status != RET_OK)
+    {
+        NRF_LOG_INFO("Failed to create binding for level control cluster, status: %d ", p_buf->u.hdr.status);
+    }
+}
 
 /**@brief Callback function receiving finding procedure results.
  *
@@ -741,21 +775,16 @@ static zb_void_t find_light_bulb_cb(zb_uint8_t param)
     zb_uint8_t                 * p_match_ep;
     zb_ret_t                     zb_err_code;
 
-    if ((p_resp->status == ZB_ZDP_STATUS_SUCCESS) && (p_resp->match_len > 0) && (!m_device_ctx.bulb_params.short_addr))
+    if ((p_resp->status == ZB_ZDP_STATUS_SUCCESS) && (p_resp->match_len > 0))
     {
         /* Match EP list follows right after response header */
         p_match_ep = (zb_uint8_t *)(p_resp + 1);
 
         /* We are searching for exact cluster, so only 1 EP may be found */
-        m_device_ctx.bulb_params.endpoint   = *p_match_ep;
-        m_device_ctx.bulb_params.short_addr = p_ind->src_addr;
+        NRF_LOG_INFO("Found bulb addr: %d ep: %d", p_ind->src_addr, *p_match_ep);
 
-        NRF_LOG_INFO("Found bulb addr: %d ep: %d", m_device_ctx.bulb_params.short_addr, m_device_ctx.bulb_params.endpoint);
-
-        zb_err_code = ZB_SCHEDULE_ALARM_CANCEL(find_light_bulb_timeout, ZB_ALARM_ANY_PARAM);
-        ZB_ERROR_CHECK(zb_err_code);
-
-        bsp_board_led_on(BULB_FOUND_LED);
+        /* Bind light bulb */
+        light_control_bind_bulb(param, p_ind->src_addr, *p_match_ep);
     }
 
     if (param)
@@ -789,31 +818,33 @@ static zb_void_t find_light_bulb(zb_uint8_t param)
     p_req->cluster_list[1]  = ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL;
     /*lint -restore */
 
-    m_device_ctx.bulb_params.short_addr = 0x00; // Reset short address in order to parse only one response.
     UNUSED_RETURN_VALUE(zb_zdo_match_desc_req(param, find_light_bulb_cb));
 }
 
-
 /**@brief Finding procedure timeout handler.
  *
- * @param[in]   param   Reference to ZigBee stack buffer that will be used to construct find request.
+ * @param[in]   param   zero-reference to ZigBee stack buffer.
  */
 static zb_void_t find_light_bulb_timeout(zb_uint8_t param)
 {
-    zb_ret_t zb_err_code;
+    zb_bool_t bind_found;
 
-    if (param)
+    /* Buffer reference is not used */
+    NRFX_ASSERT(param == 0);
+
+    /* Check the bindings of target clusters */
+    bind_found = zb_zdo_find_bind_src(LIGHT_SWITCH_ENDPOINT, ZB_ZCL_CLUSTER_ID_ON_OFF);
+    bind_found &= zb_zdo_find_bind_src(LIGHT_SWITCH_ENDPOINT, ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL);
+ 
+    if(bind_found)
     {
-        NRF_LOG_INFO("Bulb not found, try again");
-        zb_err_code = ZB_SCHEDULE_ALARM(find_light_bulb, param, MATCH_DESC_REQ_START_DELAY);
-        ZB_ERROR_CHECK(zb_err_code);
-        zb_err_code = ZB_SCHEDULE_ALARM(find_light_bulb_timeout, 0, MATCH_DESC_REQ_TIMEOUT);
-        ZB_ERROR_CHECK(zb_err_code);
+        NRF_LOG_INFO("Find all necessary bindings");
+        m_zb_binding = true;
+        bsp_board_led_on(BULB_FOUND_LED);
     }
     else
     {
-        zb_err_code = ZB_GET_OUT_BUF_DELAYED(find_light_bulb_timeout);
-        ZB_ERROR_CHECK(zb_err_code);
+        NRF_LOG_INFO("No enough binding.");
     }
 }
 
@@ -891,9 +922,9 @@ static void buttons_handler(bsp_event_t evt)
     zb_ret_t zb_err_code;
     zb_uint32_t button;
 
-    if (!m_device_ctx.bulb_params.short_addr)
+    /* If no binding is found - do not send requests. */
+    if (!m_zb_binding)
     {
-        /* No bulb found yet. */
         return;
     }
 
@@ -950,8 +981,8 @@ static void zigbee_command_handler(const uint8_t * p_command_str, uint16_t lengt
     ret_code_t err_code;
     int32_t    delay;
 
-    /* If Ligh bulb is not found - do not send requests. */
-    if (!m_device_ctx.bulb_params.short_addr)
+    /* If no binding is found - do not send requests. */
+    if (!m_zb_binding)
     {
         return;
     }
@@ -1031,8 +1062,6 @@ static zb_void_t sleepy_device_setup(void)
  */
 static void zigbee_init(void)
 {
-    zb_ieee_addr_t ieee_addr;
-
     /* Set ZigBee stack logging level and traffic dump subsystem. */
     ZB_SET_TRACE_LEVEL(ZIGBEE_TRACE_LEVEL);
     ZB_SET_TRACE_MASK(ZIGBEE_TRACE_MASK);
@@ -1042,8 +1071,8 @@ static void zigbee_init(void)
     ZB_INIT("light_switch");
 
     /* Set device address to the value read from FICR registers. */
-    zb_osif_get_ieee_eui64(ieee_addr);
-    zb_set_long_address(ieee_addr);
+    zb_osif_get_ieee_eui64(m_ieee_addr);
+    zb_set_long_address(m_ieee_addr);
 
     /* Set up Zigbee protocol main parameters. */
     zb_set_network_ed_role(IEEE_CHANNEL_MASK);
@@ -1081,8 +1110,8 @@ void zboss_signal_handler(zb_uint8_t param)
                 NRF_LOG_INFO("Joined network successfully");
                 bsp_board_led_on(ZIGBEE_NETWORK_STATE_LED);
 
-                /* Check the light device address */
-                if (m_device_ctx.bulb_params.short_addr == 0x0000)
+                /* Check the bindings */
+                if (!m_zb_binding)
                 {
                     zb_err_code = ZB_SCHEDULE_ALARM(find_light_bulb, param, MATCH_DESC_REQ_START_DELAY);
                     ZB_ERROR_CHECK(zb_err_code);
