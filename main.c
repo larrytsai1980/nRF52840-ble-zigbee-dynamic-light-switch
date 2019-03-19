@@ -49,7 +49,7 @@
  * This application uses the @ref srvlib_conn_params module.
  */
 #include "zboss_api.h"
-#include "zb_mem_config_min.h"
+//#include "zb_mem_config_min.h"
 #include "zb_error_handler.h"
 
 #include "nrf_ble_gatt.h"
@@ -106,6 +106,9 @@
 #define LIGHT_SWITCH_BUTTON_ON              BSP_BOARD_BUTTON_0                      /**< Button ID used to switch on the light bulb. */
 #define SLEEPY_ON_BUTTON                    BSP_BOARD_BUTTON_2                      /**< Button ID used to determine if we need the sleepy device behaviour (pressed means yes). */
 
+#define FIND_N_BIND_TIMEOUT                 (181 * ZB_TIME_ONE_SECOND)          /**< Find and bind timeout. */
+#define ZB_ONGOING_FIND_N_BIND_LED          BSP_BOARD_LED_3                     /**< LED to indicate ongoing find and bind procedure. */
+
 #define LIGHT_SWITCH_DIMM_STEP              15                                      /**< DIm step size - increases/decreses current level (range 0x000 - 0xfe). */
 #define LIGHT_SWITCH_DIMM_TRANSACTION_TIME  2                                       /**< Trasnsition time for a single step operation in 0.1 sec units. 0xFFFF - immediate change. */
 
@@ -140,7 +143,6 @@ typedef struct light_switch_ctx_s
 
 
 static void zigbee_command_handler(const uint8_t * p_command_str, uint16_t length);
-static zb_void_t find_light_bulb_timeout(zb_uint8_t param);
 static void light_switch_send_delayed_toggle(void * p_context);
 
 APP_TIMER_DEF(m_toggle_timer);                                                      /**< APP timer that is responsible for sending a delayed Zigbee toggle command. */
@@ -155,7 +157,7 @@ static ble_uuid_t m_adv_uuids[]          =                                      
     {BLE_UUID_NUS_SERVICE, NUS_SERVICE_UUID_TYPE}
 };
 
-static bool m_zb_binding = false;
+//static bool m_zb_binding = false;
 static zb_ieee_addr_t     m_ieee_addr;                                              /**< Device's extended address. */
 static light_switch_ctx_t m_device_ctx;
 static zb_uint8_t         m_attr_zcl_version   = ZB_ZCL_VERSION;
@@ -725,130 +727,6 @@ static zb_void_t light_switch_leave_and_join(zb_uint8_t param)
     }
 }
 
-/**@brief Function for binding light bulb.
- *
- * @param[in]   param   Optional reference to ZigBee stack buffer to be reused by bind request procedure.
- */
-zb_void_t light_control_bind_bulb(zb_uint8_t param, zb_uint16_t dst_addr, zb_uint8_t dst_endpoint)
-{
-    zb_buf_t *p_buf = ZB_BUF_FROM_REF(param);
-    zb_apsme_binding_req_t *p_req;
-    zb_ieee_addr_t dst_ieee_addr;
-
-    zb_address_ieee_by_short(dst_addr, dst_ieee_addr);
-
-    /* Bind On/Off cluster */
-    p_req = ZB_GET_BUF_PARAM(p_buf, zb_apsme_binding_req_t);
-
-    ZB_IEEE_ADDR_COPY(p_req->src_addr, &m_ieee_addr);
-    ZB_IEEE_ADDR_COPY(p_req->dst_addr.addr_long, dst_ieee_addr);
-
-    p_req->src_endpoint = LIGHT_SWITCH_ENDPOINT;
-    p_req->clusterid = ZB_ZCL_CLUSTER_ID_ON_OFF;
-    p_req->addr_mode = ZB_APS_ADDR_MODE_64_ENDP_PRESENT;
-    p_req->dst_endpoint = dst_endpoint;
-
-    zb_apsme_bind_request(param);
-    if (p_buf->u.hdr.status != RET_OK)
-    {
-        NRF_LOG_INFO("Failed to create binding for on/off cluster, status: %d ", p_buf->u.hdr.status);
-    }
-
-    /* Bind Level Control cluster */
-    p_req->clusterid = ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL;
-    zb_apsme_bind_request(param);
-    if (p_buf->u.hdr.status != RET_OK)
-    {
-        NRF_LOG_INFO("Failed to create binding for level control cluster, status: %d ", p_buf->u.hdr.status);
-    }
-}
-
-/**@brief Callback function receiving finding procedure results.
- *
- * @param[in]   param   Reference to ZigBee stack buffer used to pass received data.
- */
-static zb_void_t find_light_bulb_cb(zb_uint8_t param)
-{
-    zb_buf_t                   * p_buf  = ZB_BUF_FROM_REF(param);                              // Resolve buffer number to buffer address
-    zb_zdo_match_desc_resp_t   * p_resp = (zb_zdo_match_desc_resp_t *) ZB_BUF_BEGIN(p_buf);    // Get the begining of the response
-    zb_apsde_data_indication_t * p_ind  = ZB_GET_BUF_PARAM(p_buf, zb_apsde_data_indication_t); // Get the pointer to the parameters buffer, which stores APS layer response
-    zb_uint8_t                 * p_match_ep;
-    zb_ret_t                     zb_err_code;
-
-    if ((p_resp->status == ZB_ZDP_STATUS_SUCCESS) && (p_resp->match_len > 0))
-    {
-        /* Match EP list follows right after response header */
-        p_match_ep = (zb_uint8_t *)(p_resp + 1);
-
-        /* We are searching for exact cluster, so only 1 EP may be found */
-        NRF_LOG_INFO("Found bulb addr: %d ep: %d", p_ind->src_addr, *p_match_ep);
-
-        /* Bind light bulb */
-        light_control_bind_bulb(param, p_ind->src_addr, *p_match_ep);
-    }
-
-    if (param)
-    {
-        ZB_FREE_BUF_BY_REF(param);
-    }
-}
-
-
-/**@brief Function for sending ON/OFF and Level Control find request.
- *
- * @param[in]   param   Non-zero reference to ZigBee stack buffer that will be used to construct find request.
- */
-static zb_void_t find_light_bulb(zb_uint8_t param)
-{
-    zb_buf_t                  * p_buf = ZB_BUF_FROM_REF(param); // Resolve buffer number to buffer address
-    zb_zdo_match_desc_param_t * p_req;
-
-    /* Initialize pointers inside buffer and reserve space for zb_zdo_match_desc_param_t request */
-    UNUSED_RETURN_VALUE(ZB_BUF_INITIAL_ALLOC(p_buf, sizeof(zb_zdo_match_desc_param_t) + (1) * sizeof(zb_uint16_t), p_req));
-
-    p_req->nwk_addr         = ZB_NWK_BROADCAST_RX_ON_WHEN_IDLE; // Send to all non-sleepy devices
-    p_req->addr_of_interest = ZB_NWK_BROADCAST_RX_ON_WHEN_IDLE; // Get responses from all non-sleepy devices
-    p_req->profile_id       = ZB_AF_HA_PROFILE_ID;              // Look for Home Automation profile clusters
-
-    /* We are searching for 2 clusters: On/Off and Level Control Server */
-    p_req->num_in_clusters  = 2;
-    p_req->num_out_clusters = 0;
-    /*lint -save -e415 // Suppress warning 415 "likely access of out-of-bounds pointer" */
-    p_req->cluster_list[0]  = ZB_ZCL_CLUSTER_ID_ON_OFF;
-    p_req->cluster_list[1]  = ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL;
-    /*lint -restore */
-
-    UNUSED_RETURN_VALUE(zb_zdo_match_desc_req(param, find_light_bulb_cb));
-}
-
-/**@brief Finding procedure timeout handler.
- *
- * @param[in]   param   zero-reference to ZigBee stack buffer.
- */
-static zb_void_t find_light_bulb_timeout(zb_uint8_t param)
-{
-    zb_bool_t bind_found;
-
-    /* Buffer reference is not used */
-    NRFX_ASSERT(param == 0);
-
-    /* Check the bindings of target clusters */
-    bind_found = zb_zdo_find_bind_src(LIGHT_SWITCH_ENDPOINT, ZB_ZCL_CLUSTER_ID_ON_OFF);
-    bind_found &= zb_zdo_find_bind_src(LIGHT_SWITCH_ENDPOINT, ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL);
- 
-    if(bind_found)
-    {
-        NRF_LOG_INFO("Find all necessary bindings");
-        m_zb_binding = true;
-        bsp_board_led_on(BULB_FOUND_LED);
-    }
-    else
-    {
-        NRF_LOG_INFO("No enough binding.");
-    }
-}
-
-
 /**@brief Callback for detecting button press duration.
  *
  * @param[in]   button   BSP Button that was pressed.
@@ -912,6 +790,82 @@ static zb_void_t light_switch_button_handler(zb_uint8_t button)
     }
 }
 
+/**@brief Function to be called after find and bind procedure finish.
+ *
+ * @param[IN]   param   Parameter function is called with.
+ */
+static zb_void_t zb_find_n_bind_finish_callback(zb_uint8_t param)
+{
+    UNUSED_PARAMETER(param);
+    bsp_board_led_off(ZB_ONGOING_FIND_N_BIND_LED);
+}
+
+/**@brief Function to get time left to finish find and bind procedure
+ *
+ * @returns Time left to finish find and bind procedure
+ * 
+ * @details If procedure is already finished, function returns zero
+ */
+static zb_time_t zb_get_time_left_to_finish_find_n_bind(void)
+{
+    zb_ret_t    zb_err_code             = RET_OK;
+    zb_time_t   zb_time_left_to_finish  = 0;
+
+    zb_err_code = ZB_SCHEDULE_GET_ALARM_TIME(zb_find_n_bind_finish_callback, 0, &zb_time_left_to_finish);
+    /* Check return code, if RET_NOT_FOUND, callback not scheduled and return 0. */
+    if (zb_err_code == RET_NOT_FOUND)
+    {
+        return 0;
+    }
+    /* Check returned error code and return value of left time */
+    else
+    {
+        ZB_ERROR_CHECK(zb_err_code);
+        return zb_time_left_to_finish;
+    }
+}
+
+/**@brief Callback to finding and binding procedure.
+ * 
+ * @param[IN]   status  Procedure status.
+ * @param[IN]   addr    Found device address.
+ * @param[IN]   ep      Found device endpoint.
+ * @param[IN]   cluster Common cluster ID.
+ * 
+ * @returns Returned boolean value is used to decide if found device's cluster (ID given as parameter) should be bound.
+ */
+static zb_bool_t zb_finding_binding_cb(zb_int16_t status, zb_ieee_addr_t addr, zb_uint8_t ep, zb_uint16_t cluster)
+{
+    zb_ret_t    zb_err_code;
+
+    UNUSED_PARAMETER(addr);
+
+    /* Turn on led to indicate ongoing finding and binding procedure. */
+    bsp_board_led_on(ZB_ONGOING_FIND_N_BIND_LED);
+
+    /* Check time remaining to finish procedure and cancel callback if scheduled. */
+    if (zb_get_time_left_to_finish_find_n_bind() != 0)
+    {
+        zb_err_code = ZB_SCHEDULE_ALARM_CANCEL(zb_find_n_bind_finish_callback, 0);
+        ZB_ERROR_CHECK(zb_err_code);
+    }
+    /* Schedule callback when procedure finish. */
+    zb_err_code = ZB_SCHEDULE_ALARM(zb_find_n_bind_finish_callback, 0, FIND_N_BIND_TIMEOUT);
+    ZB_ERROR_CHECK(zb_err_code);
+
+    NRF_LOG_INFO("Finding binding callback, status %hd, ep %hd, cluster %hd", status, ep, cluster);
+
+    /* Try to bind to every onoff/level control Cluster on any found devices. */
+    if ((status == ZB_BDB_COMM_BIND_ASK_USER)
+        && ((cluster == ZB_ZCL_CLUSTER_ID_ON_OFF)||(cluster == ZB_ZCL_CLUSTER_ID_LEVEL_CONTROL)))
+    {
+        return ZB_TRUE;
+    }
+    else
+    {
+        return ZB_FALSE;
+    }
+}
 
 /**@brief Callback for button events.
  *
@@ -921,12 +875,7 @@ static void buttons_handler(bsp_event_t evt)
 {
     zb_ret_t zb_err_code;
     zb_uint32_t button;
-
-    /* If no binding is found - do not send requests. */
-    if (!m_zb_binding)
-    {
-        return;
-    }
+    zb_time_t zb_time_left_to_finish;
 
     switch(evt)
     {
@@ -938,18 +887,39 @@ static void buttons_handler(bsp_event_t evt)
             button = LIGHT_SWITCH_BUTTON_OFF;
             break;
 
+        case BSP_EVENT_KEY_3:
+            /* Check that find and bind procedure is not going start procedure and callback to be called when procedure finish. */
+            zb_time_left_to_finish = zb_get_time_left_to_finish_find_n_bind();
+            if (zb_time_left_to_finish == 0)
+            {
+                zb_err_code = zb_bdb_finding_binding_initiator(LIGHT_SWITCH_ENDPOINT, zb_finding_binding_cb);
+                ZB_ERROR_CHECK(zb_err_code);
+                zb_err_code = ZB_SCHEDULE_ALARM(zb_find_n_bind_finish_callback, 0, FIND_N_BIND_TIMEOUT);
+                ZB_ERROR_CHECK(zb_err_code);
+                /* Turn on led to indicate ongoing finding and binding procedure. */
+                bsp_board_led_on(ZB_ONGOING_FIND_N_BIND_LED);
+            }
+            else
+            {
+                NRF_LOG_INFO("Time to finish find and bind procedure: %ld", zb_time_left_to_finish);
+            }
+            break;
+
         default:
             NRF_LOG_INFO("Unhandled BSP Event received: %d", evt);
             return;
     }
 
-    if (!m_device_ctx.button.in_progress)
+    if((evt == BSP_EVENT_KEY_0)||(evt == BSP_EVENT_KEY_1))
     {
-        m_device_ctx.button.in_progress = ZB_TRUE;
-        m_device_ctx.button.timestamp = ZB_TIMER_GET();
+        if (!m_device_ctx.button.in_progress)
+        {
+            m_device_ctx.button.in_progress = ZB_TRUE;
+            m_device_ctx.button.timestamp = ZB_TIMER_GET();
 
-        zb_err_code = ZB_SCHEDULE_ALARM(light_switch_button_handler, button, LIGHT_SWITCH_BUTTON_SHORT_POLL_TMO);
-        ZB_ERROR_CHECK(zb_err_code);
+            zb_err_code = ZB_SCHEDULE_ALARM(light_switch_button_handler, button, LIGHT_SWITCH_BUTTON_SHORT_POLL_TMO);
+            ZB_ERROR_CHECK(zb_err_code);
+        }
     }
 }
 
@@ -980,12 +950,6 @@ static void zigbee_command_handler(const uint8_t * p_command_str, uint16_t lengt
 {
     ret_code_t err_code;
     int32_t    delay;
-
-    /* If no binding is found - do not send requests. */
-    if (!m_zb_binding)
-    {
-        return;
-    }
 
     if (strncmp(COMMAND_ON, (char *)p_command_str, strlen(COMMAND_ON)) == 0)
     {
@@ -1109,16 +1073,6 @@ void zboss_signal_handler(zb_uint8_t param)
             {
                 NRF_LOG_INFO("Joined network successfully");
                 bsp_board_led_on(ZIGBEE_NETWORK_STATE_LED);
-
-                /* Check the bindings */
-                if (!m_zb_binding)
-                {
-                    zb_err_code = ZB_SCHEDULE_ALARM(find_light_bulb, param, MATCH_DESC_REQ_START_DELAY);
-                    ZB_ERROR_CHECK(zb_err_code);
-                    zb_err_code = ZB_SCHEDULE_ALARM(find_light_bulb_timeout, 0, MATCH_DESC_REQ_TIMEOUT);
-                    ZB_ERROR_CHECK(zb_err_code);
-                    param = 0; // Do not free buffer - it will be reused by find_light_bulb callback
-                }
             }
             else
             {
@@ -1141,6 +1095,10 @@ void zboss_signal_handler(zb_uint8_t param)
             {
                 NRF_LOG_ERROR("Unable to leave network. Status: %d", status);
             }
+            break;
+
+        case ZB_BDB_SIGNAL_FINDING_AND_BINDING_INITIATOR_FINISHED:
+            NRF_LOG_INFO("Find and bind initiatior finished, identify time: %hd, status: %d", m_attr_identify_time, status);
             break;
 
         case ZB_COMMON_SIGNAL_CAN_SLEEP:
